@@ -1,0 +1,81 @@
+<?php
+
+function autocomment_schema() {
+ $schema['autocomment'] = array(
+    'fields' => array(
+      'cid' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique comment ID.',
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "{node}.nid",
+      ),
+      'pid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "parent cid",
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "post user",
+      ),
+      'text' => array(
+        'type' => 'varchar',
+        'length' => 512,
+        'not null' => TRUE,
+        'default' => ''
+      ),
+      'status' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "o - not posted, 1 - already posted",
+      ),
+      'real_cid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'indexes' => array(
+      'pid'    => array('pid'),
+      'nid'    => array('nid'),
+      'status' => array('status'), // This index is probably unused
+    ),
+    'primary key' => array('cid')
+  );
+
+  return $schema;
+}
+
+/**
+ * Implementation of hook_install().
+ */
+function autocomment_install() {
+  drupal_install_schema('autocomment');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function autocomment_uninstall() {
+  drupal_uninstall_schema('autocomment');
+}

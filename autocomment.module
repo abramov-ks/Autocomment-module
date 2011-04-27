@@ -1,0 +1,945 @@
+<?php
+
+
+    /**
+     * Implements hook_perm().
+     */
+
+    define('AUTOCOMMENT_TABLE_NAME','autocomment');
+    define('AUTOCOMMENT_MORNING',1);
+    define('AUTOCOMMENT_AFTERNOON',2);
+    define('AUTOCOMMENT_EVENING',3);
+    define('AUTOCOMMENT_NIGHT',4);
+
+    function autocomment_perm() {
+      return array('administer autocomment', 'manage autocomment','be commentator');
+    }
+
+    /**
+     * Implements hook_menu().
+     */
+    function autocomment_menu() {
+          $items['admin/settings/autocomment'] = array(
+            'page callback'     => 'drupal_get_form',
+            'page arguments'    => array('autocomment_adminform'),
+            'access arguments'  => array('administer autocomment'),
+            'title'             => 'Автокомментарии',
+            'type'              => MENU_NORMAL_ITEM,
+          );
+
+          $items['js/autocomment/tree'] = array(
+            'page callback'     => 'autocomment_js_get_tree',
+            'page arguments'    => array(2),
+            'access arguments'  => array('manage autocomment'),
+            'type'              => MENU_CALLBACK,
+          );
+
+
+          $items['js/autocomment/comment/%'] = array(
+            'page callback'     => 'autocomment_js_comment',
+            'page arguments'    => array(3),
+            'access arguments'  => array('manage autocomment'),
+            'type'              => MENU_CALLBACK,
+          );
+
+          return $items;
+    }
+
+    /**
+     * autocomment_js_get_tree()
+     *
+     * Возвращает дерево комментов через ajax
+     *
+     * @return void
+     */
+    function autocomment_js_get_tree() {
+        // строим дерево
+        $tree = autocomment_generate_form(false);
+        $width   = count($tree);
+        $height  = count($tree[0]);
+
+        $ac_depth  = array();
+        $ac_uid    = array();
+        $ac_text   = array();
+
+        $users_list = autocomment_get_users();
+        $vid = 1;
+        $parent_vid = 0;
+        for ($y=0;$y<$height;$y++) {
+            $to_close = 0;
+            for ($x=0;$x<$width;$x++) {
+                if ($tree[$x][$y]==0) {
+                    break;
+                }
+                $ac_depth[]     = $x;
+                $ac_text[]      = '';
+                $ac_uid[]       = $tree[$x][$y];
+            }
+        }
+
+        $html = '<div class="autocomment-wrapper"><input type="hidden" name="save" value="1" />';
+        $html.= autocomment_render_from_arrays($ac_depth,$ac_uid,$ac_text);
+        $html.= '</div>';
+        echo json_encode(array('status'=>'success','html'=>$html));
+
+        die;
+    }
+
+    /**
+     * autocomment_js_comment()
+     *
+     * Возвращает блок коммента через ajax
+     *
+     * @param mixed $depth
+     * @return void
+     */
+    function autocomment_js_comment($depth) {
+        $users_list = autocomment_get_users();
+        $data='<div>';
+        $data.='<input type="hidden" name="ac_depth[]" value="'.$depth.'" />';
+        $data.='<label>Автор</label>'.autocomment_get_users_select($users_list,autocomment_get_random_user_from_list($users_list),'ac_uid[]','');
+        $data.='<label>Комментарий</label><textarea name="ac_text[]"></textarea>';
+        $data.='<a class="add">добавить ответ</a>';
+        $data.='<a class="remove">удалить</a>';
+        $data.='</div>';
+        echo json_encode(array('status'=>'success','html'=>$data));
+        die;
+    }
+
+    /**
+     * autocomment_get_random_user_from_list()
+     *
+     * Возвращает случайного пользователя из списка возможных
+     *
+     * @param mixed $users_list
+     * @return
+     */
+    function autocomment_get_random_user_from_list($users_list) {
+
+        $rand_user = array_rand($users_list);
+        return $rand_user;
+
+    }
+
+    /**
+     * autocomment_adminform()
+     *
+     * Админка (TODO: в отдельный файл вынести)
+     *
+     * @return
+     */
+    function autocomment_adminform() {
+
+        $form = array();
+        $form['common'] = array(
+            '#type' => 'fieldset',
+            '#title' => 'Основные настройки',
+            
+        );
+        
+        $form['types'] = array(
+            '#type' => 'fieldset',
+            '#title' => 'Типы материалов для автокомментирования'
+        );
+        
+        $types = node_get_types();
+        
+        foreach ($types as $type) {
+            $form['types']['autocomment_type_'.$type->type] = array(
+                '#type' => 'checkbox',
+                '#default_value' => variable_get('autocomment_type_'.$type->type,0),
+                '#title' => ($type->name)
+            );
+            
+        }
+
+        $form['common']['ac_enabled'] = array(
+            '#type' => 'checkbox',
+            '#title' => 'Разрешить постинг автокомментариев',
+            '#default_value' => variable_get('ac_enabled',1)
+        );
+
+        $form['common']['ac_watchdog'] = array(
+            '#type' => 'checkbox',
+            '#title' => 'Регистрировать события в журнал',
+            '#default_value' => variable_get('ac_watchdog',0)
+        );
+
+        $form['chances'] = array(
+            '#type' => 'fieldset',
+            '#title' => 'Вероятности комментариев'
+        );
+        $form['chances']['ac_changes_'.AUTOCOMMENT_MORNING] = array(
+            '#type' => 'textfield',
+            '#title' => 'Утро',
+            '#default_value' => (int)variable_get('ac_changes_'.AUTOCOMMENT_MORNING,50).'%',
+            '#description' => 'Вероятность публикации утром в процентах (от 0 до 100)',
+            '#size' => 10,
+            '#maxlength' => 5,
+            '#required' => TRUE
+        );
+
+        $form['chances']['ac_changes_'.AUTOCOMMENT_AFTERNOON] = array(
+            '#type' => 'textfield',
+            '#title' => 'День',
+            '#default_value' => (int)variable_get('ac_changes_'.AUTOCOMMENT_AFTERNOON,60).'%',
+            '#description' => 'Вероятность публикации днем в процентах (от 0 до 100)',
+            '#size' => 10,
+            '#maxlength' => 5,
+            '#required' => TRUE
+        );
+
+        $form['chances']['ac_changes_'.AUTOCOMMENT_EVENING] = array(
+            '#type' => 'textfield',
+            '#title' => 'Вечер',
+            '#default_value' => (int)variable_get('ac_changes_'.AUTOCOMMENT_EVENING,70).'%',
+            '#description' => 'Вероятность публикации вечером в процентах (от 0 до 100)',
+            '#size' => 10,
+            '#maxlength' => 5,
+            '#required' => TRUE
+        );
+
+        $form['chances']['ac_changes_'.AUTOCOMMENT_NIGHT] = array(
+            '#type' => 'textfield',
+            '#title' => 'Ночь',
+            '#default_value' => (int)variable_get('ac_changes_'.AUTOCOMMENT_NIGHT,20).'%',
+            '#description' => 'Вероятность публикации ночью в процентах (от 0 до 100)',
+            '#size' => 10,
+            '#maxlength' => 5,
+            '#required' => TRUE
+        );
+
+        $perm_name = 'manage autocomment';
+
+        $form['users'] = array(
+            '#type' => 'fieldset',
+            '#title' => 'Допущеные пользователи'
+        );
+
+        $users = autocomment_get_users();
+
+        $form['users']['list'] = array(
+            '#type' => 'select',
+            '#title' => 'Список',
+            '#multiple' => true,
+            '#options' => $users
+        );
+
+        $form['user_chances'] = array(
+            '#type' => 'fieldset',
+            '#title' => 'Вероятности пользователей',
+            '#collapsible' => true,
+            '#collapsed' => true
+
+        );
+
+        foreach ($users as $uid=>$user_name) {
+            $form['user_chances']['ac_user_'.$uid.'_chances'] = array(
+                '#type' => 'textfield',
+                '#title' => 'Вероятность пользователя '.$user_name,
+                '#default_value' => (int)variable_get('ac_user_'.$uid.'_chances',50).'%',
+                '#description' => 'Вероятность публикации пользователя в процентах (от 0 до 100)',
+                '#size' => 10,
+                '#maxlength' => 4,
+            );
+        }
+
+
+        return system_settings_form($form);
+    }
+
+
+    /**
+     * autocomment_get_users()
+     *
+     * Возвращает список пользователей автокомментатов
+     *
+     * @return
+     */
+    function autocomment_get_users() {
+        global $autocomment_users;
+        $perm_name = 'be commentator';
+        if (empty($autocomment_users)) {
+            $res = db_query("SELECT * FROM {permission} WHERE perm LIKE '%%".$perm_name."%%'");
+            
+            while ($perm = db_fetch_array($res)) {
+                if ($perm['rid']==2) {
+                    $res2 = db_query("SELECT * FROM {users}");
+                } else {
+                    $res2 = db_query("SELECT u.* FROM {users} u LEFT JOIN {users_roles} ur ON ur.uid=u.uid WHERE ur.rid=%d",$perm['rid']);
+                }                    
+                
+                while ($user = db_fetch_array($res2)) {
+                    
+                    $autocomment_users[$user['uid']] = $user['name'];
+                    
+                }                  
+                
+                                                
+            }
+        }
+        return $autocomment_users;
+    }
+
+
+    /**
+     * _generate_matrix()
+     *
+     * Генерация пустой матрицы
+     *
+     * @param mixed $x
+     * @param mixed $y
+     * @return
+     */
+    function _generate_matrix($x,$y) {
+        $matrix = array();
+        for ($i=0;$i<$x;$i++) {
+            for ($t=0;$t<$y;$t++) {
+                $matrix[$i][$t] = 0;
+            }
+        }
+
+        return $matrix;
+    }
+
+    /**
+     * autocomment_generate_form()
+     *
+     * Генерация дерева случайных комментов
+     *
+     * @param mixed $params_array
+     * @return
+     */
+    function autocomment_generate_form($params_array) {
+
+        // подставные параметры
+        $params_array['possibilities'][0] = array(3,5);
+        $params_array['possibilities'][1] = array(1,3);
+        $params_array['possibilities'][2] = array(0,0);
+
+        // определяем вероятности по уровням
+        $level = array();
+        foreach ($params_array['possibilities'] as $l=>$data) {
+            $level[$l] = rand($data[0],$data[1]);
+        }
+
+        $width   = count($params_array['possibilities']); // ширина матрицы
+        $height = $level[0]; // высота матрицы
+
+        // генерим пустую матрицу
+        $matrix = _generate_matrix($width,$height);
+
+        // заполняем матрицу вероятностяи
+        for ($cur_level = 0; $cur_level<$width; $cur_level++) {
+            $poss = min($level[$cur_level],$height);
+            $checked_poss = 0;
+            while ($checked_poss<$poss) {
+                $new_pos = rand(0,$height-1);
+
+                if (empty($matrix[$cur_level][$new_pos])) {
+                   // krumo($cur_level.' '.$new_pos);
+                    $matrix[$cur_level][$new_pos] = 1;
+                    $checked_poss++;
+                }
+            }
+        }
+
+        $tree       = new stdClass();
+        $user_uids  = array();
+        $users      = autocomment_get_users();
+        $user_poss  = array();
+        // теперь заполняем ее реальными пользователями
+        foreach ($users as $uid=>$name) {
+            $user_poss[] = array('uid'=>$uid,'poss'=>0,'weight'=>(int)variable_get('ac_user_'.$uid.'_chances',50));
+        }
+
+        for ($y=0;$y<$height;$y++) {
+            for ($x=0;$x<$width;$x++) {
+                if ($matrix[$x][$y]>0) {
+                    $matrix[$x][$y] = autocomment_get_random_user($user_poss);
+                }
+            }
+        }
+
+        return $matrix;
+    }
+
+    function autocomment_array_by_key($array,$key_name) {
+        $result = array();
+        foreach ($array as $item) {
+            $result[] = $item[$key_name];
+        }
+        return $result;
+    }
+
+    /**
+     * autocomment_get_random_by_weight()
+     *
+     *
+     *
+     * @param mixed $values
+     * @param mixed $weights
+     * @return
+     */
+    function autocomment_get_random_by_weight($users_with_weights) {
+        $count = count($users_with_weights);
+        $i = 0;
+        $n = 0;
+        $weights_array = autocomment_array_by_key($users_with_weights,'weight');
+        $num = mt_rand(0, array_sum($weights_array));
+        while($i < $count){
+            $n += $weights_array[$i];
+            if($n >= $num){
+                break;
+            }
+            $i++;
+        }
+        return $i;
+    }
+
+    /**
+     * autocomment_get_random_user()
+     *
+     *
+     *
+     * @param mixed $users
+     * @return
+     */
+    function autocomment_get_random_user(&$users) {
+
+        $count      = count($users);
+        $min_poss   = 9999;
+        $found_pos  = false;
+        foreach ($users as $user) {
+            $min_poss = ($min_poss>$user['poss'])?$user['poss']:$min_poss;
+        }
+
+        while (!$found_pos) {
+            srand();
+
+            $cur_pos = autocomment_get_random_by_weight($users);
+
+            if ($users[$cur_pos]['poss']==$min_poss) {
+                $found_pos = true;
+                $users[$cur_pos]['poss']++;
+                return $users[$cur_pos]['uid'];
+            }
+        }
+
+    }
+
+    /**
+     * autocomment_get_users_select()
+     *
+     * Возвращает селект со списком пользователей
+     *
+     * @param mixed $list
+     * @param mixed $selected
+     * @param string $name
+     * @param string $attrs
+     * @return
+     */
+    function autocomment_get_users_select($list,$selected = null,$name = 'user',$attrs = '') {
+        $output = '';
+        $output.= '<select name="'.$name.'" '.$attrs.'>';
+        foreach ($list as $uid=>$name) {
+            if ($selected==$uid) {
+                $output.='<option value="'.$uid.'" selected="selected">'.$name.'</option>';
+            } else {
+                $output.='<option value="'.$uid.'">'.$name.'</option>';
+            }
+        }
+        $output.= '</select>';
+        return $output;
+    }
+
+    /**
+     * autocomment_render_tree()
+     *
+     * Строит дерево для ноды
+     *
+     * @param mixed $nid
+     * @return
+     */
+    function autocomment_render_tree($nid) {
+        $output = '';
+
+        $tree_items = array();
+        $tree_sql_res = db_query("SELECT * FROM {".AUTOCOMMENT_TABLE_NAME."} WHERE nid=%d",$nid);
+        while ($item = db_fetch_array($tree_sql_res)) {
+            $tree_items[] = $item;
+        }
+
+        if (!empty($tree_items)) {
+            $output.=autocomment_render_subtree($tree_items,0,false);
+        }
+
+        if (!empty($output)) {
+            $output ='<ul class="autocomment-tree">'.$output.'</ul>';
+        } else {
+            $output = '<span>для этого материала автокомментарии не были определены. </span><a class="create-tree">Создать сейчас?</a>';
+        }
+
+        return $output;
+    }
+
+
+    /**
+     * autocomment_render_subtree()
+     *
+     * Строит поддерево
+     *
+     * @param mixed $items
+     * @param mixed $pid
+     * @param bool $writable
+     * @return
+     */
+    function autocomment_render_subtree($items,$pid,$writable = true) {
+
+        // get used
+        $used_items = array();
+        foreach ($items as $item) {
+            if ($item['pid']==$pid) {
+                $used_items[] = $item;
+            }
+        }
+        $output = '';
+
+        $users_list = autocomment_get_users();
+        foreach ($used_items as $item) {
+            $output.='<li>';
+            if ($writable) {
+                $output.='<div>';
+                $output.='<input type="hidden" name="ac_depth[]" value="'.$item['depth'].'" />';
+                $output.='<label>Автор</label>'.autocomment_get_users_select($users_list,$item['uid'],'ac_uid[]','');
+                $output.='<label>Комментарий</label><textarea name="ac_text[]">'.$item['text'].'</textarea>';
+                $output.='<a class="add">добавить ответ</a>';
+                $output.='<a class="remove">удалить</a>';
+                $output.='</div>';
+            } else {
+                $output.='<div>';
+                $output.='<label>Автор</label>'.autocomment_get_users_select($users_list,$item['uid'],'ac_uid[]','disabled="disabled"');
+                $output.='<label>Комментарий</label><textarea disabled="disabled" name="ac_text['.$item['cid'].']">'.$item['text'].'</textarea>';
+                if ($item['status']) {
+                    $output.='<div class="publish">уже опубликован</div>';
+                } else {
+					if (empty($item['text'])) {
+						$output.='<div class="publish not-published">пустой и не будет опубликован</div>';
+					} else {
+						$output.='<div class="publish not-published">еще не опубликован</div>';
+					}
+                }
+                $output.='</div>';
+            }
+            $sub_tree = autocomment_render_subtree($items,$item['cid'],$writable);
+            if (!empty($sub_tree)) {
+                $output.='<ul>';
+                $output.=autocomment_render_subtree($items,$item['cid'],$writable);
+                $output.='</ul>';
+            }
+            $output.='</li>';
+        }
+        return $output;
+    }
+
+
+    /**
+     * autocomment_elements()
+     *
+     * Регистрирует элемент
+     *
+     * @return
+     */
+    function autocomment_elements() {
+    	return array(
+    	'autocomments' => array(
+         	'#input' => TRUE
+      	 ));
+    }
+
+
+    /**
+     * autocomment_render_from_arrays()
+     *
+     * Генерит дерево из массивов с инфой
+     *
+     * @param mixed $depth_array
+     * @param mixed $uid_array
+     * @param mixed $text_array
+     * @return
+     */
+    function autocomment_render_from_arrays($depth_array,$uid_array,$text_array) {
+        $output = '';
+        $parent_depth = -1;
+        $items = array();
+        $vid = 1;
+        foreach ($depth_array as $id=>$cur_depth) {
+
+            if ($cur_depth>0) {
+                $parent_vid = $depth_vid[$cur_depth-1];
+            } else {
+                $parent_vid = 0;
+            }
+            $items[] = array('cid'=>$vid, 'depth' =>$cur_depth, 'uid' => $uid_array[$id], 'text' => $text_array[$id],'pid'=>$parent_vid);
+            $depth_vid[$cur_depth] = $vid;
+            $vid++;
+        }
+
+        $output = '<div class="actions"><a id="add-top-comment">Добавить комментарий</a></div><ul class="autocomment-tree">'.autocomment_render_subtree($items,0,true).'</ul>';
+
+        return $output;
+
+    }
+
+    /**
+     * theme_autocomments()
+     *
+     * Выводит дерево коментов
+     *
+     * @param mixed $element
+     * @return
+     */
+    function theme_autocomments($element) {
+          drupal_add_css(drupal_get_path('module','autocomment').'/css/autocomment.css');
+          drupal_add_js(drupal_get_path('module','autocomment').'/js/autocomment.js');
+        if (!empty($element['#value'])) {
+            return $element['#value'];
+        } elseif (!empty($element['#items'])) {
+            if (!empty($element['#post'])) {
+                return autocomment_render_from_arrays($element['#post']['ac_depth'], $element['#post']['ac_uid'], $element['#post']['ac_text']);
+            } else {
+                return autocomment_render_from_arrays($element['#items']['ac_depth'], $element['#items']['ac_uid'], $element['#items']['ac_text']);
+            }
+        }
+    }
+
+    /**
+     * hook_theme()
+     *
+     *
+     *
+     * @return
+     */
+    function autocomment_theme() {
+    	return array(
+    		'autocomments' => array(
+          		'arguments' => array('element' => NULL))
+      	);
+    }
+
+    /**
+     * autocomment_form_alter()
+     *
+     * Перехват формы
+     *
+     * @param mixed $form
+     * @param mixed $form_state
+     * @param mixed $form_id
+     * @return void
+     */
+    function autocomment_form_alter(&$form, $form_state, $form_id) {
+          if (!variable_get('ac_enabled',1) || !user_access('manage autocomment') || !variable_get('autocomment_type_'.$form['#node']->type,0)) {
+                return false;
+          }
+          
+          if (isset($form['type']) && isset($form['#node'])) {
+            $node = $form['#node'];
+            if ($form['type']['#value'] .'_node_form' == $form_id) {
+              // Attachments fieldset
+              $users_list = autocomment_get_users();
+              
+              if (empty($users_list)) {
+                    return false;
+              }
+              
+              $form['autocomment'] = array(
+                '#type' => 'fieldset',
+                '#title' => t('Autocomment'),
+                '#collapsible' => TRUE,
+                '#attributes' => array('class'=>'autocomment-wrapper'),
+                '#collapsed' => FALSE,
+                '#weight' => 30,
+              );
+
+              if ($node->nid) {
+                  // выводим дерево
+                  $data = autocomment_render_tree($node->nid);
+              } else {
+                  // строим дерево
+                  $tree = autocomment_generate_form(false);
+                  $width   = count($tree);
+                  $height  = count($tree[0]);
+
+                  $ac_depth  = array();
+                  $ac_uid    = array();
+                  $ac_text   = array();
+
+                  
+                  $vid = 1;
+                  $parent_vid = 0;
+                  for ($y=0;$y<$height;$y++) {
+                    $to_close = 0;
+                    for ($x=0;$x<$width;$x++) {
+                        if ($tree[$x][$y]==0) {
+                            break;
+                        }
+                        $ac_depth[]     = $x;
+                        $ac_text[]      = '';
+                        $ac_uid[]       = $tree[$x][$y];
+                    }
+                  }
+              }
+              $form['autocomment']['data'] = array(
+                '#type'=> 'autocomments',
+                '#value' => $data,
+                '#items' => array('ac_depth'=>$ac_depth,'ac_uid'=>$ac_uid,'ac_text'=>$ac_text)
+              );
+              $form['#submit'][] = 'autocomment_submit';
+             }
+        }
+
+    }
+
+    /**
+     * autocomment_submit()
+     *
+     * Обработчик формы ноды
+     *
+     * @param mixed $form
+     * @param mixed $form_state
+     * @return
+     */
+    function autocomment_submit(&$form, &$form_state) {
+
+        // не трогать уже существующую ноду
+        if ($form['nid']['#value'] && $form['autocomment']['data']['#post']['save']!='1') {
+            return false;
+        }
+
+        $comments   = array();
+        $data       = $form['autocomment']['data']['#post'];
+        //krumo($data);
+
+        $items = array();
+        $parent_depth   = 0;
+        $parent_vid     = 0;
+        $vid = 1;
+        foreach ($data['ac_text'] as $id => $text) {
+            if (empty($text)) { continue; }
+            $parent_vid = autocomment_get_last_vid($items,$data['ac_depth'][$id]-1);
+
+            $items[$id] = array(
+                'vid' => $vid++,
+                'uid' => $data['ac_uid'][$id],
+                'text'=>$text,
+                'depth'=> $data['ac_depth'][$id],
+                'parent_vid' => $parent_vid
+            );
+        }
+        $form_state['values']['autocomments'] = $items;
+        return true;
+    }
+
+
+    /**
+     * autocomment_nodeapi()
+     *
+     * Обработчик уже сохраненной ноды
+     *
+     * @param mixed $node
+     * @param mixed $op
+     * @param mixed $arg
+     * @return void
+     */
+    function autocomment_nodeapi(&$node, $op, $arg) {
+
+        switch ($op) {
+            case 'insert': case 'update':
+                if (autocomment_save_tree($node->nid,$node->autocomments)) {
+                    if (variable_get('ac_watchdog',0)) {
+                        $watchdog_args = array('@type' => $node->type, '%title' => $node->title);
+                        $node_link = l(t('view'), 'node/'. $node->nid);
+                        watchdog('content', 'Автокомментарии были сохранены.', $watchdog_args, WATCHDOG_NOTICE, $node_link);
+                    }
+                    drupal_set_message('Автокомментарии были сохранены');
+                }
+
+                break;
+
+        }
+    }
+
+    /**
+     * autocomment_save_tree()
+     *
+     * Сохраняет дерево в базе
+     *
+     * @param mixed $nid
+     * @param mixed $tree
+     * @return void
+     */
+    function autocomment_save_tree($nid,$tree) {
+		if (empty($tree)) {
+			return false;
+		}
+
+        db_query('DELETE FROM {'.AUTOCOMMENT_TABLE_NAME.'} WHERE nid=%d',$nid);
+        $cntr = 0;
+        $vid_to_cid = array();
+        foreach ($tree as $tree_item) {
+
+            if ($tree_item['parent_vid']==0) {
+                db_query("INSERT INTO {".AUTOCOMMENT_TABLE_NAME."}(nid,pid,uid,text,status) VALUES (%d,%d,%d,'%s',%d)",
+                    $nid,0,$tree_item['uid'],$tree_item['text'],0);
+                $vid_to_cid[$tree_item['vid']] = db_last_insert_id(AUTOCOMMENT_TABLE_NAME,'cid');
+                $cntr++;
+            } else {
+                $pid = $vid_to_cid[$tree_item['parent_vid']];
+                db_query("INSERT INTO {".AUTOCOMMENT_TABLE_NAME."}(nid,pid,uid,text,status) VALUES (%d,%d,%d,'%s',%d)",
+                    $nid,$pid,$tree_item['uid'],$tree_item['text'],0);
+                $vid_to_cid[$tree_item['vid']] = db_last_insert_id(AUTOCOMMENT_TABLE_NAME,'cid');
+                $cntr++;
+            }
+        }
+        return $cntr;
+    }
+
+
+    function autocomment_get_last_vid($items,$depth) {
+        if ($depth<0) { return 0; }
+        $last_vid = 0;
+        foreach ($items as $item) {
+            if ($item['depth']==$depth) {
+                $last_vid = $item['vid'];
+            }
+        }
+        return $last_vid;
+    }
+
+
+
+
+    /************************************************/
+
+    /**
+     * autocomment_get_part_time()
+     *
+     * Возвращает текущее время суток
+     *
+     * @return
+     */
+    function autocomment_get_part_time() {
+
+        $cur_hour = date('H');
+        if ($cur_hour>=6 && $cur_hour<11) {
+            return AUTOCOMMENT_MORNING;
+        } elseif ($cur_hour>=11 && $cur_hour<18) {
+            return AUTOCOMMENT_AFTERNOON;
+        } elseif ($cur_hour>=18 && $cur_hour<23) {
+            return AUTOCOMMENT_EVENING;
+        } elseif ($cur_hour>=23 || $cur_hour<6) {
+           return AUTOCOMMENT_NIGHT;
+        }
+
+    }
+
+    /**
+     * autocomment_get_current_posibillity()
+     *
+     * Возвращает вероятность текущего времени суток
+     *
+     * @return
+     */
+    function autocomment_get_current_posibillity() {
+        $now_day_part = autocomment_get_part_time();
+        return ((int)variable_get('ac_changes_'.$now_day_part,50))/100;
+    }
+
+    function autocomment_be_or_not($possibility) {
+
+        $deep = strlen($possibility)-strpos($possibility,'.')-1;
+        $max = pow(10,$deep);
+        $randed = rand(1,$max);
+
+        return ($randed<=($possibility*$max));
+    }
+
+    /**
+     * autocomment_get_real_pid()
+     *
+     * Возвращает имя реального родителя коммента
+     *
+     * @param mixed $nid
+     * @param mixed $pid
+     * @return
+     */
+    function autocomment_get_real_pid($nid,$pid) {
+        return db_result(db_query("SELECT real_cid FROM {".AUTOCOMMENT_TABLE_NAME."} WHERE nid=%d AND cid=%d",$nid,$pid));
+    }
+
+    function autocomment_get_last_comment($nid) {
+        return db_fetch_array(db_query("SELECT * FROM {".AUTOCOMMENT_TABLE_NAME."} WHERE nid=%d AND status=1 ORDER BY cid DESC LIMIT 0,1",$nid));
+    }
+
+    /**
+     * autocomment_cron()
+     *
+     * @return void
+     */
+    function autocomment_cron() {
+        // 1. get nodes wis status = 0;
+        global $user;
+        $user = user_load(array('uid'=>1));
+
+        $sql_res = db_query("SELECT nid FROM {".AUTOCOMMENT_TABLE_NAME."} WHERE status=0 GROUP BY nid");
+        $nids_to_autocomment = array();
+
+        while ($node = db_fetch_array($sql_res)) {
+            $nids_to_autocomment[] = $node['nid'];
+        }
+
+        foreach ($nids_to_autocomment as $nid) {
+            $ac_data = db_fetch_array(db_query("SELECT * FROM {".AUTOCOMMENT_TABLE_NAME."} WHERE nid=%d AND status=0 ORDER BY cid ASC LIMIT 0,1",$nid));
+            $current_posibility = autocomment_get_current_posibillity();
+            $real_pid = ($ac_data['pid']>0)?autocomment_get_real_pid($ac_data['nid'],$ac_data['pid']):0;
+            $last_comment = autocomment_get_last_comment($ac_data['nid']);
+            if (!empty($last_comment)) {
+                $ts = rand($last_comment['timestamp'],time());
+            } else {
+                $ts = time();
+            }
+            if (autocomment_be_or_not($current_posibility)) {
+                $comment_user = user_load($ac_data['uid']);
+                $comment = array(
+                       'pid'       => $real_pid,
+	                   'nid'       => $ac_data['nid'],
+					   'uid'       => $comment_user->uid,
+					   'name'      => $comment_user->name,
+					   'format'    => 1,
+					   'subject'   => '',
+                       'status'    => COMMENT_PUBLISHED, 
+					   'comment'   => $ac_data['text'],
+					   'hostname'  => '127.0.0.1',
+                       'timestamp' => $ts
+                );
+                $real_cid = comment_save($comment);
+                if ($real_cid) {
+                    db_query("UPDATE {".AUTOCOMMENT_TABLE_NAME."} SET status=%d, real_cid=%d, timestamp=%d WHERE cid=%d",1,$real_cid,time(),$ac_data['cid']);
+                    if (variable_get('ac_watchdog',0)) {
+                        $watchdog_args = array('@type' => $node->type, '%title' => $node->title);
+                        $node_link = l(t('view'), 'node/'. $ac_data['nid'].'/#comment-'.$real_cid);
+                        watchdog('content', 'Комментарий был опубликован автоматически.', $watchdog_args, WATCHDOG_NOTICE, $node_link);
+                    }
+                } else {
+                    watchdog('content', 'Ошибка публикации комментария.', $watchdog_args, WATCHDOG_ERROR, $node_link);
+                }
+                echo 'posted';
+            } else {
+                echo 'not now';
+            }
+        }
+        // 2. get min cid item form every one
+        // 3. check poss
+        // 4. post
+        // 5. save info
+    }

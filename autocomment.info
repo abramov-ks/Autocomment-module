@@ -1,0 +1,7 @@
+; $Id: $
+name = Autocomment
+description = Автокомментарии для сайтов
+core = 6.x
+version = "6.x-1.1"
+project = "autocomment"
+ 
